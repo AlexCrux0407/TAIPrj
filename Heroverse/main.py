@@ -6,6 +6,8 @@ import uvicorn
 from app.routes import router
 from app.database import engine, SessionLocal, get_db
 from app import models
+from sqlalchemy import create_engine
+import os
 
 # Nuevas importaciones para el módulo de gestión comercial
 from app.gestion_comercial.routes import router as gestion_router
@@ -38,9 +40,7 @@ app.include_router(gestion_router)
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
-# In main.py or a migration script
-from sqlalchemy import create_engine
-import os
+
 
 
 

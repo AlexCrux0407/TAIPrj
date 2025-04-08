@@ -41,6 +41,7 @@ class Cliente(Base):
     cambios_nivel = relationship("CambioNivel", back_populates="cliente")
 
 
+
 class Proveedor(Base):
     __tablename__ = "proveedores"
 
@@ -53,6 +54,40 @@ class Proveedor(Base):
     contacto_telefono = Column(String, nullable=True)  
     notas = Column(String, nullable=True)  
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    pedidos_proveedor = relationship("PedidoProveedor", back_populates="proveedor")
+
+class PedidoProveedor(Base):
+    __tablename__ = "pedidos_proveedor"
+
+    id = Column(Integer, primary_key=True, index=True)
+    proveedor_id = Column(Integer, ForeignKey("proveedores.id"))
+    fecha_pedido = Column(DateTime, default=datetime.utcnow)
+    fecha_entrega_esperada = Column(DateTime, nullable=True)
+    estado = Column(String, default="pending")
+    total = Column(Float, default=0.0)
+    notas = Column(String, nullable=True)
+
+    # Relaciones
+    proveedor = relationship("Proveedor", back_populates="pedidos_proveedor")
+    detalles = relationship("DetallePedidoProveedor", back_populates="pedido")
+
+class DetallePedidoProveedor(Base):
+    __tablename__ = "detalles_pedidos_proveedor"
+
+    id = Column(Integer, primary_key=True, index=True)
+    pedido_id = Column(Integer, ForeignKey("pedidos_proveedor.id"))
+    comic_id = Column(Integer, ForeignKey("comics.id"))
+    cantidad = Column(Integer)
+    precio_unitario = Column(Float)
+    subtotal = Column(Float)
+
+    # Relaciones
+    pedido = relationship("PedidoProveedor", back_populates="detalles")
+    comic = relationship("Comic")
+
+# Update the Proveedor model to include the relationship
+Proveedor.pedidos_proveedor = relationship("PedidoProveedor", back_populates="proveedor")
 
 class Pedido(Base):
     __tablename__ = "pedidos"

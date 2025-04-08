@@ -35,7 +35,7 @@ class Comic(ComicBase):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     category: Optional["Category"] = None
-    limite_minimo: Optional[int] = 10  # Add this line
+    limite_minimo: Optional[int] = 10  
     
     class Config:
         from_attributes = True
@@ -131,6 +131,10 @@ class DetallePedidoBase(BaseModel):
 class DetallePedidoCreate(DetallePedidoBase):
     pass
 
+class DetallePedidoUpdate(BaseModel):
+    cantidad: Optional[int] = None
+    precio_unitario: Optional[float] = None
+    
 class DetallePedido(DetallePedidoBase):
     id: int
     pedido_id: int

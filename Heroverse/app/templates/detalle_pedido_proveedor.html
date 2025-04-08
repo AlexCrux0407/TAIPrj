@@ -189,21 +189,7 @@
     <div class="actions-container mt-4">
         <a href="/gestion/pedidos-proveedor" class="secondary-button">Volver a Pedidos</a>
         
-        <div>
-            {% if pedido.estado == 'pending' %}
-            <a href="/gestion/pedidos-proveedor/{{ pedido.id }}/editar" class="edit-button">Editar Pedido</a>
-            <a href="/gestion/pedidos-proveedor/{{ pedido.id }}/estado?nuevo_estado=confirmed" class="confirm-button">Confirmar Pedido</a>
-            <a href="/gestion/pedidos-proveedor/{{ pedido.id }}/estado?nuevo_estado=cancelled" class="cancel-button">Cancelar Pedido</a>
-            {% elif pedido.estado == 'confirmed' %}
-            <a href="/gestion/pedidos-proveedor/{{ pedido.id }}/editar" class="edit-button">Editar Pedido</a>
-            <a href="/gestion/pedidos-proveedor/{{ pedido.id }}/estado?nuevo_estado=processing" class="process-button">Marcar En Proceso</a>
-            <a href="/gestion/pedidos-proveedor/{{ pedido.id }}/estado?nuevo_estado=cancelled" class="cancel-button">Cancelar Pedido</a>
-            {% elif pedido.estado == 'processing' %}
-            <a href="/gestion/pedidos-proveedor/{{ pedido.id }}/estado?nuevo_estado=shipping" class="shipping-button">Marcar En Tránsito</a>
-            {% elif pedido.estado == 'shipping' %}
-            <a href="/gestion/pedidos-proveedor/{{ pedido.id }}/recepcionar" class="receive-button">Recepcionar Pedido</a>
-            {% endif %}
-        </div>
+
     </div>
 </div>
 

@@ -2,6 +2,10 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from typing import Optional
 from datetime import datetime
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey
+from sqlalchemy.orm import relationship
+from datetime import datetime
+from ..database import Base
 def delete_detalle_pedido(db: Session, detalle_id: int):
     db_detalle = db.query(models.DetallePedido).filter(models.DetallePedido.id == detalle_id).first()
     if db_detalle:
@@ -187,7 +191,6 @@ def crear_cliente_frecuente(db: Session, cliente_data: dict):
     if existing_cliente:
         raise ValueError("Ya existe un cliente con este correo electrónico")
     
-    # Extraer los campos base que sabemos que existen en el modelo Cliente
     nuevo_cliente = models.Cliente(
         nombre=cliente_data['nombre'],
         email=cliente_data['email'],
@@ -280,3 +283,7 @@ def registrar_cambio_nivel(db: Session, cliente_id: int, nivel_anterior: str, ni
         print(f"Error al registrar cambio de nivel: {e}")
         return None
     
+#Pedido proveedor
+
+def update_proveedor_model(Proveedor):
+    Proveedor.pedidos_proveedor = relationship("PedidoProveedor", back_populates="proveedor")

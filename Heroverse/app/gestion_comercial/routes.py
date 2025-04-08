@@ -1,18 +1,26 @@
 from fastapi import APIRouter, Request, Depends, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import create_engine
 from typing import List, Optional
 from datetime import datetime, timedelta
 import logging
 
-# Reorganización de importaciones para evitar conflictos
+from .. import models
+from ..database import engine, Base, get_db
+from ..models import Proveedor, Comic, PedidoProveedor, DetallePedidoProveedor
+
+
+
 from app.database import get_db
 from app import models, schemas
-from . import crud  # crud específico de gestión comercial
+from . import crud # crud específico de gestión comercial
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
 
 # Ruta para el panel de Gestión Comercial
 @router.get("/gestion", response_class=HTMLResponse)
@@ -72,9 +80,9 @@ async def gestion_stock(request: Request, db: Session = Depends(get_db)):
             "image_url": comic.image_url,
             "price": comic.price,
             "stock": comic.stock,
-            "min_stock": getattr(comic, 'min_stock', 5),  # Usar 5 si no existe el atributo
-            "max_stock": getattr(comic, 'max_stock', 20),  # Usar 20 si no existe el atributo
-            "category": "General",  # Simulado - implementar categorías en BD
+            "min_stock": getattr(comic, 'min_stock', 5),  
+            "max_stock": getattr(comic, 'max_stock', 20), 
+            "category": "General",  
             "stock_status": stock_status
         })
     
@@ -206,52 +214,36 @@ async def clientes_frecuentes(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/gestion/pedidos-proveedor", response_class=HTMLResponse)
 async def pedidos_proveedor(request: Request, db: Session = Depends(get_db)):
-    # Estadísticas simplificadas
+    # Estadísticas dummy o puedes calcularlas en base a los pedidos reales después
     stats = {
         "pending_orders": 5,
         "processing_orders": 3,
         "shipping_orders": 2,
         "completed_orders": 12
     }
-    
+
     # Obtener proveedores
     proveedores = []
     try:
         proveedores = db.query(models.Proveedor).all()
     except Exception as e:
         print(f"Error al obtener proveedores: {e}")
-    
-    # Crear pedidos simulados con datos fijos (sin objetos complejos)
+
+    # ✅ Obtener pedidos reales de la base de datos
     pedidos_proveedor = []
+    try:
+        pedidos_proveedor = db.query(models.PedidoProveedor).all()
+    except Exception as e:
+        print(f"Error al obtener pedidos a proveedores: {e}")
     
-    # Crear solo tres pedidos simples
-    for i in range(1, 4):
-        # Proveedor por defecto si no hay ninguno en la base de datos
-        proveedor_dict = {"nombre": f"Proveedor {i}", "email": "ejemplo@mail.com"}
-        
-        # Usar un proveedor real si existe
-        if proveedores and i <= len(proveedores):
-            proveedor = proveedores[i-1]
-            proveedor_dict = {"nombre": proveedor.nombre, "email": proveedor.email}
-        
-        pedido = {
-            "id": i,
-            "proveedor": proveedor_dict,
-            "fecha_pedido": datetime.now(),
-            "estado": "pending",
-            "total": 100.00 * i
-        }
-        
-        pedidos_proveedor.append(pedido)
-    
-    # Paginación simple
+    # Paginación básica
     pagination = {
         "current": 1,
         "pages": [1],
         "prev_page": None,
         "next_page": None
     }
-    
+
     return templates.TemplateResponse("pedidos_proveedor.html", {
         "request": request,
         "stats": stats,
@@ -261,106 +253,277 @@ async def pedidos_proveedor(request: Request, db: Session = Depends(get_db)):
     })
 
 # Ruta para crear un nuevo pedido a proveedor
-@router.get("/gestion/pedidos-proveedor/crear", response_class=HTMLResponse)
-async def crear_pedido_proveedor(request: Request, db: Session = Depends(get_db)):
-    # Obtener proveedores y cómics para los formularios
-    proveedores = db.query(models.Proveedor).all()
-    comics = db.query(models.Comic).all()
+
+@router.api_route("/gestion/pedidos-proveedor/crear", methods=["GET", "POST"])
+async def crear_pedido_proveedor(
+    request: Request, 
+    db: Session = Depends(get_db),  # Esto ya es correcto, FastAPI inyectará la sesión real
+    comic_id: Optional[int] = None
+):
+    if request.method == "GET":
+        # Obtener proveedores y cómics para los formularios
+        proveedores = db.query(models.Proveedor).all()  
+        comics = db.query(models.Comic).all()
+        
+        context = {
+            "request": request,
+            "proveedores": proveedores,
+            "comics": comics,
+            "comic_preseleccionado_id": comic_id
+        }
+        
+        return templates.TemplateResponse("crear_pedido_proveedor.html", context)
     
-    return templates.TemplateResponse("crear_pedido_proveedor.html", {
-        "request": request,
-        "proveedores": proveedores,
-        "comics": comics
-    })
+    elif request.method == "POST":
+        # Crear una nueva sesión para manejar la transacción
+        session = SessionLocal()
+        try:
+            # Obtener datos del formulario
+            form_data = await request.form()
+            
+            # Extraer datos de la solicitud
+            proveedor_id = int(form_data.get('proveedor_id'))
+            fecha_entrega_esperada = form_data.get('fecha_entrega')
+            notas = form_data.get('notas', '')
+            
+            # Manejar múltiples cómics usando getlist con clave base
+            comic_ids = form_data.getlist('comic_ids[]') or form_data.getlist('comic_ids')
+            cantidades = form_data.getlist('cantidades[]') or form_data.getlist('cantidades')
+            precios = form_data.getlist('precios[]') or form_data.getlist('precios')
+            
+            # Convertir a listas si es un solo valor
+            if not isinstance(comic_ids, list):
+                comic_ids = [comic_ids]
+            if not isinstance(cantidades, list):
+                cantidades = [cantidades]
+            if not isinstance(precios, list):
+                precios = [precios]
+            
+            # Validar que los arrays tengan la misma longitud
+            if len(comic_ids) != len(cantidades) or len(comic_ids) != len(precios):
+                raise HTTPException(status_code=400, detail="Datos de productos inconsistentes")
+            
+            # Crear el pedido base
+            nuevo_pedido = models.PedidoProveedor(
+                proveedor_id=proveedor_id,
+                fecha_pedido=datetime.now(),
+                estado='pending',
+                notas=notas,
+                fecha_entrega_esperada=datetime.strptime(fecha_entrega_esperada, '%Y-%m-%d') if fecha_entrega_esperada else None,
+                total=0  # Calcularemos el total después
+            )
+            
+            session.add(nuevo_pedido)
+            session.flush()  # Obtener el ID del nuevo pedido sin commit
+            
+            # Calcular el total y agregar detalles
+            total = 0
+            for comic_id, cantidad, precio in zip(comic_ids, cantidades, precios):
+                # Crear detalle de pedido
+                detalle = models.DetallePedidoProveedor(
+                    pedido_id=nuevo_pedido.id,
+                    comic_id=int(comic_id),
+                    cantidad=int(cantidad),
+                    precio_unitario=float(precio),
+                    subtotal=int(cantidad) * float(precio)
+                )
+                
+                session.add(detalle)
+                total += detalle.subtotal
+            
+            # Actualizar el total del pedido
+            nuevo_pedido.total = total
+            
+            session.commit()
+            session.refresh(nuevo_pedido)
+            
+            # Redirigir a la página de detalles del pedido
+            return RedirectResponse(
+                url=f"/gestion/pedidos-proveedor/{nuevo_pedido.id}", 
+                status_code=303
+            )
+        
+        except Exception as e:
+            session.rollback()
+            # Loguear el error
+            print(f"Error al crear pedido de proveedor: {e}")
+            
+            # Obtener proveedores y cómics para recargar el formulario
+            proveedores = session.query(models.Proveedor).all()
+            comics = session.query(models.Comic).all()
+            
+            # Mostrar el formulario de nuevo con un mensaje de error
+            return templates.TemplateResponse("crear_pedido_proveedor.html", {
+                "request": request,
+                "proveedores": proveedores,
+                "comics": comics,
+                "error": str(e)
+            })
+        finally:
+            # Asegurarse de cerrar la sesión
+            session.close()
 
 # Ruta para crear un pedido a proveedor con un cómic preseleccionado
-@router.get("/gestion/crear-pedido-proveedor", response_class=HTMLResponse)
-async def crear_pedido_proveedor_recomendado(
+@router.route("/gestion/pedidos-proveedor/crear", methods=["GET", "POST"])
+async def crear_pedido_proveedor(
     request: Request, 
-    comic_id: Optional[int] = None, 
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    comic_id: Optional[int] = None
 ):
     """
-    Crear un pedido a proveedor, opcionalmente preseleccionando un cómic específico
+    Manejar la creación de pedidos a proveedores
+    - GET: Mostrar el formulario de creación
+    - POST: Procesar la creación del pedido
     """
-    # Obtener proveedores y cómics para los formularios
-    proveedores = db.query(models.Proveedor).all()
-    comics = db.query(models.Comic).all()
+    if request.method == "GET":
+        # Obtener proveedores y cómics para los formularios
+        proveedores = db.query(Proveedor).all()  # Use Proveedor directly, not models.Proveedor
+        comics = db.query(Comic).all()
+        
+        context = {
+            "request": request,
+            "proveedores": proveedores,
+            "comics": comics,
+            "comic_preseleccionado_id": comic_id
+        }
+        
+        return templates.TemplateResponse("crear_pedido_proveedor.html", context)
     
-    # Preparar los datos del contexto sin usar objetos complejos
-    # Simplemente pasamos el ID del cómic preseleccionado si existe
-    context = {
-        "request": request,
-        "proveedores": proveedores,
-        "comics": comics,
-        "comic_preseleccionado_id": comic_id
-    }
-    
-    return templates.TemplateResponse("crear_pedido_proveedor.html", context)
+    elif request.method == "POST":
+        try:
+            # Obtener datos del formulario
+            form_data = await request.form()
+            
+            # Extraer datos de la solicitud
+            proveedor_id = int(form_data.get('proveedor_id'))
+            fecha_entrega_esperada = form_data.get('fecha_entrega')
+            notas = form_data.get('notas', '')
+            
+            # Manejar múltiples cómics usando getlist con clave base
+            comic_ids = form_data.getlist('comic_ids[]') or form_data.getlist('comic_ids')
+            cantidades = form_data.getlist('cantidades[]') or form_data.getlist('cantidades')
+            precios = form_data.getlist('precios[]') or form_data.getlist('precios')
+            
+            # Convertir a listas si es un solo valor
+            if not isinstance(comic_ids, list):
+                comic_ids = [comic_ids]
+            if not isinstance(cantidades, list):
+                cantidades = [cantidades]
+            if not isinstance(precios, list):
+                precios = [precios]
+            
+            # Validar que los arrays tengan la misma longitud
+            if len(comic_ids) != len(cantidades) or len(comic_ids) != len(precios):
+                raise HTTPException(status_code=400, detail="Datos de productos inconsistentes")
+            
+            # Crear el pedido base
+            nuevo_pedido = PedidoProveedor(
+                proveedor_id=proveedor_id,
+                fecha_pedido=datetime.now(),
+                estado='pending',
+                notas=notas,
+                fecha_entrega_esperada=datetime.strptime(fecha_entrega_esperada, '%Y-%m-%d') if fecha_entrega_esperada else None,
+                total=0  # Calcularemos el total después
+            )
+            
+            db.add(nuevo_pedido)
+            db.flush()  # Obtener el ID del nuevo pedido sin commit
+            
+            # Calcular el total y agregar detalles
+            total = 0
+            for comic_id, cantidad, precio in zip(comic_ids, cantidades, precios):
+                # Crear detalle de pedido
+                detalle = DetallePedidoProveedor(
+                    pedido_id=nuevo_pedido.id,
+                    comic_id=int(comic_id),
+                    cantidad=int(cantidad),
+                    precio_unitario=float(precio),
+                    subtotal=int(cantidad) * float(precio)
+                )
+                
+                db.add(detalle)
+                total += detalle.subtotal
+            
+            # Actualizar el total del pedido
+            nuevo_pedido.total = total
+            
+            db.commit()
+            db.refresh(nuevo_pedido)
+            
+            # Redirigir a la página de detalles del pedido
+            return RedirectResponse(
+                url=f"/gestion/pedidos-proveedor/{nuevo_pedido.id}", 
+                status_code=303
+            )
+        
+        except Exception as e:
+            db.rollback()
+            # Loguear el error
+            print(f"Error al crear pedido de proveedor: {e}")
+            
+            # Obtener proveedores y cómics para recargar el formulario
+            proveedores = db.query(Proveedor).all()
+            comics = db.query(Comic).all()
+            
+            # Mostrar el formulario de nuevo con un mensaje de error
+            return templates.TemplateResponse("crear_pedido_proveedor.html", {
+                "request": request,
+                "proveedores": proveedores,
+                "comics": comics,
+                "error": str(e)
+            })
 
 # Ruta para ver detalles de un pedido a proveedor
 @router.get("/gestion/pedidos-proveedor/{pedido_id}", response_class=HTMLResponse)
 async def ver_pedido_proveedor(pedido_id: int, request: Request, db: Session = Depends(get_db)):
-    # Simular un pedido para mostrar (en una implementación real, buscaríamos en la BD)
-    proveedor = db.query(models.Proveedor).first()
-    if not proveedor:
-        proveedor = {"id": 1, "nombre": "Proveedor de ejemplo", "email": "proveedor@ejemplo.com", "telefono": "555-1234"}
-    
-    comics = db.query(models.Comic).limit(3).all()
-    
-    fecha_hoy = datetime.now()
-    fecha_entrega = datetime(datetime.now().year, datetime.now().month + 1, 1)
-    
-    # Simular fechas de cambios de estado
-    fechas_estado = {
-        "fecha_confirmacion": fecha_hoy,
-        "fecha_procesado": fecha_hoy,
-        "fecha_envio": fecha_hoy,
-        "fecha_entrega_real": None
-    }
-    
-    # Simular detalles - IMPORTANTE: Asegúrate de que esto sea una lista, no un método
+    # Obtener el pedido real desde la base de datos
+    pedido = db.query(models.PedidoProveedor).filter_by(id=pedido_id).first()
+
+    if not pedido:
+        return templates.TemplateResponse("404.html", {
+            "request": request,
+            "mensaje": "Pedido a proveedor no encontrado"
+        }, status_code=404)
+
+    # Cargar los detalles y calcular totales
     detalles = []
     total = 0
-    
-    for i, comic in enumerate(comics):
-        cantidad = i + 1
-        precio = comic.price
-        subtotal = cantidad * precio
+
+    for detalle in pedido.detalles:
+        subtotal = detalle.cantidad * detalle.precio_unitario
         total += subtotal
-        
+
         detalles.append({
-            "comic": comic,
-            "cantidad": cantidad,
-            "precio_unitario": precio,
+            "comic": detalle.comic,
+            "cantidad": detalle.cantidad,
+            "precio_unitario": detalle.precio_unitario,
             "subtotal": subtotal
         })
-    
-    pedido = {
-        "id": pedido_id,
-        "proveedor": proveedor,
-        "fecha_pedido": fecha_hoy,
-        "fecha_entrega_esperada": fecha_entrega,
-        "fecha_entrega_real": None,
-        "estado": "processing",  # Puede ser: pending, confirmed, processing, shipping, completed, cancelled
-        "notas": "Pedido de reposición de inventario para temporada alta",
-        "total": total,
-        "detalles": detalles,  # Asegúrate de que sea una lista normal, no un método
-        **fechas_estado
-    }
-    
+
     return templates.TemplateResponse("detalle_pedido_proveedor.html", {
         "request": request,
-        "pedido": pedido
+        "pedido": pedido,
+        "detalles": detalles,
+        "total": total
     })
+
+
+
+@router.post("/gestion/pedidos-proveedor/eliminar/{pedido_id}")
+def eliminar_pedido(pedido_id: int, db: Session = Depends(get_db)):
+    pedido = db.query(PedidoProveedor).get(pedido_id)
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+    db.delete(pedido)
+    db.commit()
+    return RedirectResponse(url="/gestion/pedidos-proveedor", status_code=303)
     
     
-    
+# Rutas para Gestión de Stock ------------------------------------------------------------------------------------------------------
 @router.get("/stock/entrada", response_class=HTMLResponse)
 async def entrada_stock_form(request: Request, db: Session = Depends(get_db)):
-    # Usamos el módulo crud local
-    comics = db.query(models.Comic).all()  # O usar app.crud.get_comics si está disponible
-    proveedores = db.query(models.Proveedor).all()  # O usar app.crud.get_proveedores si está disponible
+    comics = db.query(models.Comic).all()  
+    proveedores = db.query(models.Proveedor).all()
     return templates.TemplateResponse(
         "stock_entrada.html", 
         {"request": request, "comics": comics, "proveedores": proveedores}
@@ -562,17 +725,12 @@ async def crear_cliente_frecuente(
             except ValueError:
                 logger.warning(f"Invalid date format: {fecha_nacimiento}")
         
-        # Log form data for debugging
         form_data = await request.form()
         logger.info(f"Received form data: {dict(form_data)}")
         
-        # Process checkbox values
         newsletter_value = "newsletter" in form_data
         promociones_value = "promociones" in form_data
         
-        # Process genres (multi-checkbox) - Método corregido
-        # En lugar de getall, usamos la lista generos que ya recibimos como parámetro
-        # o podemos acceder directamente al form_data para obtener valores individuales
         if isinstance(generos, list):
             generos_str = ",".join(generos)
         else:
@@ -621,9 +779,8 @@ async def cliente_frecuente_historial(
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     
-    # Para la demo, simulamos un nivel, puntos y pedidos
-    nivel = "gold"  # En la implementación real, esto vendría del cliente
-    puntos = 750    # En la implementación real, esto vendría del cliente
+    nivel = "gold"  
+    puntos = 750    
     
     # Obtener pedidos reales del cliente
     pedidos = db.query(models.Pedido).filter(models.Pedido.cliente_id == cliente_id).all()
@@ -728,10 +885,8 @@ async def cliente_frecuente_promocion_submit(
     valid_until: str = Form(...),
     db: Session = Depends(get_db)
 ):
-    # Aquí procesarías los datos del formulario
-    # y enviarías la promoción al cliente
-    
-    # Redireccionar a la lista de clientes frecuentes
+
+
     return RedirectResponse(url="/gestion/clientes-frecuentes", status_code=303)
 
 @router.get("/gestion/clientes-frecuentes/{cliente_id}/nivel", response_class=HTMLResponse)
@@ -750,7 +905,7 @@ async def cliente_frecuente_nivel_form(
     
     # Calcular puntos y total de compras
     # En una implementación real, calcularías esto de la base de datos
-    puntos = sum(pedido.total for pedido in cliente.pedidos) // 10  # Ejemplo simple de cálculo de puntos
+    puntos = sum(pedido.total for pedido in cliente.pedidos) // 10  
     total_compras = sum(pedido.total for pedido in cliente.pedidos)
     
     return templates.TemplateResponse("cliente_frecuente_nivel.html", {

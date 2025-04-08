@@ -53,8 +53,8 @@
                                 </td>
                                 <td>${{ detalle.precio_unitario }}</td>
                                 <td>
-                                    <input type="number" name="cantidades[]" value="{{ detalle.cantidad }}" min="1" max="{{ detalle.comic.stock + detalle.cantidad }}" class="quantity-input">
-                                    <input type="hidden" name="detalle_ids[]" value="{{ detalle.id }}">
+                                    <input type="number" name="cantidades" value="{{ detalle.cantidad }}" min="1" max="{{ detalle.comic.stock + detalle.cantidad }}" class="quantity-input">
+                                    <input type="hidden" name="detalle_ids" value="{{ detalle.id }}">
                                 </td>
                                 <td>${{ detalle.subtotal }}</td>
                                 <td>
